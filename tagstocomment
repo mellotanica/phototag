@@ -1,0 +1,5 @@
+#!/usr/bin/bash
+
+list="$1"
+alist=`echo "$list" | sed -e "s/,/\\n/g" | sort`
+echo "$alist" | ( TAGS=""; while read line ; do  TAGS="$TAGS"'{'"$line"'}'; done; echo "$TAGS")

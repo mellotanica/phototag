@@ -1,0 +1,192 @@
+#!/usr/bin/bash
+# Copyright (C) 2015 Marco Melletti
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+tagsFile="/home/mello/fotoprova/.tags"
+
+usage(){
+	echo
+	echo `basename $0`" - manipulate image tags"
+	echo 
+	echo `basename $0`" ACTION [-i] file [tags]"
+	echo
+	echo "ACTIONS"
+	echo -e "\tdel"
+	echo -e "\t\tdelete tags from exif comment"
+	echo -e "\tset"
+	echo -e "\t\tset tags in exif comment"
+	echo -e "\tget"
+	echo -e "\t\tread existing tags"
+	echo -e "\tfix"
+	echo -e "\t\tfix the tags to match alphabetical ordering"
+	echo
+	echo "If 'file' is a directory, all contents, including subdirectories contents, will be affected"
+	echo
+	echo "'tags' is a comma-separated list of tags for the 'add' action."
+	echo
+	echo "'-i' option is used with 'get' action to return internal tag representation"
+	echo
+	echo
+	exit 0
+}
+
+readTagsInternal(){
+	exiv2 -g Exif.Photo.UserComment -pt "$1" 2> /dev/null | sed -e 's/[A-Za-z0-9 \.]*{/{/'
+}
+
+readTags(){
+	TAGS=`readTagsInternal "$1"`
+	echo "$TAGS" | sed -e 's/{//g' | sed -e 's/}/,/g' | sed -e "s/,$//"
+}
+
+removeTags(){
+	tlist=`echo "$1" | sed -e 's/}/}\\n/g' | sed -e '/^$/d'`
+	echo "$tlist" | while read line; do
+	count=`grep "$line" "$tagsFile" | rev | awk -F "\t" '{ print $1 }' | rev`
+	count=$((count-1))
+	if test "$count" -gt 0; then
+		sed -i "s/$line.*/$line\\t$count/" "$tagsFile"
+	else
+		sed -i "/$line.*/d" "$tagsFile"
+	fi
+done
+}
+
+addTags(){
+	tlist=`echo "$1" | sed -e 's/}/}\\n/g' | sed -e '/^$/d'`
+	oldtags=`exiv2 -g Exif.Photo.UserComment -pt "$2" 2> /dev/null | sed -e 's/[A-Za-z0-9 \.]*{/{/'`
+	echo "$tlist" | while read line; do
+	if [[ $oldtags != *$line* ]]; then
+		count=`grep "$line" "$tagsFile" | rev | awk -F "\t" '{ print $1 }' | rev`
+		if test -n "$count"; then
+			count=$((count+1))
+			sed -i "s/$line.*/$line\\t$count/" "$tagsFile"
+		else
+			echo -e "$line""\t""1" >> "$tagsFile"
+		fi
+	fi
+done
+}
+
+clearFile(){
+	TAGS=`exiv2 -g Exif.Photo.UserComment -pt "$1" 2> /dev/null | sed -e 's/[A-Za-z0-9 \.]*{/{/'`
+	if test -n "$TAGS"; then
+		removeTags "$TAGS"
+		exiv2 -M"del Exif.Photo.UserComment" "$1"
+	fi
+}
+
+clearFolder(){
+	pushd "$1" &> /dev/null
+	for f in *; do
+		if test -d "$f"; then
+			clearFolder "$f"
+		else
+			clearFile "$f"
+		fi
+	done
+	popd &> /dev/null
+}
+
+# $1: file name
+# $2: full tag string in internal representation
+insertTags(){
+	exiv2 -p c "$1" &> /dev/null
+	if test "$?" -eq 0; then
+		addTags "$2" "$1"
+		exiv2 -M"set Exif.Photo.UserComment charset=Ascii $2" "$1"
+	fi
+}
+
+# $1: directory name
+# $2: full tag string in internal representation
+tagFolder(){
+	pushd "$1" &> /dev/null
+	for f in *; do
+		if test -d "$f"; then
+			tagFolder "$f" "$2"
+		else
+			insertTags "$f" "$2"
+		fi
+	done
+	popd &> /dev/null
+}
+
+fixFile(){
+	list=`readTags "$1" | sed -e 's/,/\\n/g' | sed -e '/^$/d' | sort | ( tags=""; while read l; do tags="$tags"'{'"$l"'}'; done; echo "$tags") `
+	clearFile "$1"
+	insertTags "$1" "$list"
+}
+
+fixTags(){
+	pushd "$1" &> /dev/null
+	for f in *; do
+		if test -d "$f"; then
+			fixTags "$f"
+		else
+			fixFile "$f"
+		fi
+	done
+	popd &> /dev/null
+}
+
+
+if test $# -lt 2; then
+	usage
+fi
+
+case "$1" in
+	"del")
+		if test -d "$2"; then
+			clearFolder "$2"
+		else
+			clearFile "$2"
+		fi
+		;;
+	"set")
+		if test $# -lt 3; then
+			usage
+		fi
+		tl=`tagstocomment "$3"`
+		if test -d "$2"; then
+			tagFolder "$2" "$tl"
+		else
+			insertTags "$2" "$tl"
+		fi
+		;;
+	"get")
+		if test -f "$2"; then
+			readTags "$2"
+		elif test "$2" = "-i" -a -f "$3" ;then
+			readTagsInternal "$3"
+		else
+			usage
+		fi
+		;;
+	"fix")
+		if test -d "$2"; then
+			fixTags "$2"
+		elif test -f "$2"; then
+			fixFile "$2"
+		else
+			usage
+		fi
+		;;
+	*)
+		usage
+		;;
+esac
+

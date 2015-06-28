@@ -1,0 +1,110 @@
+#!/usr/bin/bash
+# Copyright (C) 2015 Marco Melletti
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+usage(){
+	echo
+	echo `basename "$0"`" - set exif comments metadata interactively"
+	echo
+	echo `basename "$0"`" [file]"
+	echo
+	echo "if 'file' is specified, run program on 'file'"
+	echo
+	echo "if 'file is a directory (cwd if not specified), the program is run on all the subtree starting from 'file' (or the cwd)"
+	echo
+	echo
+	exit 0
+}
+
+tagFile(){
+	echo "$1"
+	tycat "$1"
+
+	ts="false"
+
+	existing=`phototag get "$1"`
+
+	while test "$ts" = "false"; do
+		append="false"
+		if test -n "$existing"; then
+			echo "existing tags: $existing"
+
+			echo "append new tags? [y/n]"
+			read append
+			if test -z "$append" -o "$append" = "y";then
+				append="true"
+			else
+				append="false"
+			fi
+		fi
+
+		echo "specify tags (comma-separated)."
+		read readtags
+
+		change="false"
+
+		if test -z "$readtags";then
+			echo "leave tags unchanged? [y/n]"
+		else
+			if test "$append" = "true"; then
+				tags="$existing","$readtags"
+			else
+				tags="$readtags"
+			fi
+			echo "is \"$tags\" correct? [y/n]"
+			change="true"
+		fi
+		read answer
+
+		if test -z "$answer" -o "$answer" = "y"; then
+			if test "$change" = "true"; then
+				if test "$append" = "false"; then
+					phototag del "$1"
+				fi
+				phototag set "$1" "$tags"
+			fi
+			ts="true"
+		fi
+	done
+	clear
+}
+
+iterativeTag(){
+	pushd "$1" &> /dev/null
+
+	for f in *; do
+		if test -d "$f"; then
+			iterativeTag "$f"
+		elif test -f "$f"; then
+			tagFile "$f"
+		fi
+	done
+
+	popd &> /dev/null
+}
+
+dir=`pwd`
+
+if test -d "$1"; then
+	dir="$1"
+elif test -f "$1"; then
+	tagFile "$1"
+	exit 0
+else
+	usage
+fi
+
+iterativeTag "$dir"
